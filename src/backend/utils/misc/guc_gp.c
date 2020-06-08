@@ -129,7 +129,6 @@ bool        test_AppendOnlyHash_eviction_vs_just_marking_not_inuse = false;
 bool		Debug_appendonly_print_datumstream = false;
 bool		Debug_appendonly_print_visimap = false;
 bool		Debug_appendonly_print_compaction = false;
-bool		Debug_resource_group = false;
 bool		Debug_bitmap_print_insert = false;
 bool		Test_print_direct_dispatch_info = false;
 bool        Test_print_prefetch_joinqual = false;
@@ -194,9 +193,6 @@ int			Debug_dtm_action_protocol = DEBUG_DTM_ACTION_PROTOCOL_DEFAULT;
 
 int			Debug_dtm_action_segment = DEBUG_DTM_ACTION_SEGMENT_DEFAULT;
 int			Debug_dtm_action_nestinglevel = DEBUG_DTM_ACTION_NESTINGLEVEL_DEFAULT;
-
-/* Enable check for compatibility of encoding and locale in createdb */
-bool		gp_encoding_check_locale_compatibility;
 
 int			gp_connection_send_timeout;
 
@@ -4217,25 +4213,14 @@ struct config_string ConfigureNamesString_gp[] =
 	},
 
 	{
-		{"gp_session_role", PGC_BACKEND, GP_WORKER_IDENTITY,
-			gettext_noop("Reports the default role for the session."),
-			gettext_noop("Valid values are DISPATCH, EXECUTE, and UTILITY."),
-			GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE
-		},
-		&gp_session_role_string,
-		"dispatch",
-		check_gp_session_role, assign_gp_session_role, show_gp_session_role
-	},
-
-	{
-		{"gp_role", PGC_SUSET, CLIENT_CONN_OTHER,
+		{"gp_role", PGC_BACKEND, GP_WORKER_IDENTITY,
 			gettext_noop("Sets the role for the session."),
 			gettext_noop("Valid values are DISPATCH, EXECUTE, and UTILITY."),
 			GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE
 		},
 		&gp_role_string,
-		"dispatch",
-		NULL, assign_gp_role, show_gp_role
+		"undefined",
+		check_gp_role, assign_gp_role, show_gp_role
 	},
 
 	{

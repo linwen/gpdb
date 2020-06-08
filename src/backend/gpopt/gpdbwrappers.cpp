@@ -639,6 +639,28 @@ gpdb::FuncStrict
 	return false;
 }
 
+bool
+gpdb::IsFuncNDVPreserving
+	(
+	Oid funcid
+	)
+{
+	// Given a function oid, return whether it's one of a list of NDV-preserving
+	// functions (estimated NDV of output is similar to that of the input)
+	switch (funcid)
+	{
+		// for now, these are the functions we consider for this optimization
+		case LOWER_OID:
+		case LTRIM_SPACE_OID:
+		case BTRIM_SPACE_OID:
+		case RTRIM_SPACE_OID:
+		case UPPER_OID:
+			return true;
+		default:
+			return false;
+	}
+}
+
 char
 gpdb::FuncStability
 	(
@@ -2128,6 +2150,24 @@ gpdb::IsOpStrict
 	return false;
 }
 
+bool
+gpdb::IsOpNDVPreserving
+	(
+	Oid opno
+	)
+{
+	switch (opno)
+	{
+		// for now, we consider only the concatenation op as NDV-preserving
+		// (note that we do additional checks later, e.g. col || 'const' is
+		// NDV-preserving, while col1 || col2 is not)
+		case OIDTextConcatenateOperator:
+			return true;
+		default:
+			return false;
+	}
+}
+
 void
 gpdb::GetOpInputTypes
 	(
@@ -2487,7 +2527,6 @@ gpdb::GetExternalTableEntry
 {
 	GP_WRAP_START;
 	{
-		/* catalog tables: pg_exttable */
 		return GetExtTableEntry(rel_oid);
 	}
 	GP_WRAP_END;
@@ -2506,7 +2545,6 @@ gpdb::CreateForeignScanForExternalTable
 {
 	GP_WRAP_START;
 	{
-		/* catalog tables: pg_exttable */
 		return create_foreignscan_for_external_table(rel_oid, scanrelid,
 							     qual, targetlist);
 	}
@@ -3135,10 +3173,10 @@ register_mdcache_invalidation_callbacks(void)
 		/* pg_index */
 
 		/*
-		 * pg_exttable is only updated when a new external table is dropped/created,
+		 * pg_foreign_table is updated when a new external table is dropped/created,
 		 * which will trigger a relcache invalidation event.
 		 */
-		/* pg_exttable */
+		/* pg_foreign_table */
 
 		/*
 		 * XXX: no syscache on pg_inherits. Is that OK? For any partitioning

@@ -27,6 +27,7 @@
 #include "cdb/cdblocaldistribxact.h"
 #include "cdb/cdbvars.h"
 #include "commands/async.h"
+#include "executor/nodeShareInputScan.h"
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "postmaster/autovacuum.h"
@@ -149,7 +150,8 @@ CreateSharedMemoryAndSemaphores(bool makePrivate, int port)
 		else if (IsResGroupEnabled())
 			size = add_size(size, ResGroupShmemSize());
 		size = add_size(size, SharedSnapshotShmemSize());
-		size = add_size(size, FtsShmemSize());
+		if (Gp_role == GP_ROLE_DISPATCH || Gp_role == GP_ROLE_UTILITY)
+			size = add_size(size, FtsShmemSize());
 
 		size = add_size(size, ProcGlobalShmemSize());
 		size = add_size(size, XLOGShmemSize());
@@ -184,6 +186,7 @@ CreateSharedMemoryAndSemaphores(bool makePrivate, int port)
 		size = add_size(size, CheckpointerShmemSize());
 		size = add_size(size, CancelBackendMsgShmemSize());
 		size = add_size(size, WorkFileShmemSize());
+		size = add_size(size, ShareInputShmemSize());
 
 #ifdef FAULT_INJECTOR
 		size = add_size(size, FaultInjector_ShmemSize());
@@ -270,8 +273,9 @@ CreateSharedMemoryAndSemaphores(bool makePrivate, int port)
 	CommitTsShmemInit();
 	SUBTRANSShmemInit();
 	MultiXactShmemInit();
-    FtsShmemInit();
-    tmShmemInit();
+	if (Gp_role == GP_ROLE_DISPATCH || Gp_role == GP_ROLE_UTILITY)
+		FtsShmemInit();
+	tmShmemInit();
 	InitBufferPool();
 
 	/*
@@ -345,6 +349,7 @@ CreateSharedMemoryAndSemaphores(bool makePrivate, int port)
 	AsyncShmemInit();
 	BackendCancelShmemInit();
 	WorkFileShmemInit();
+	ShareInputShmemInit();
 
 	/*
 	 * Set up Instrumentation free list
@@ -353,8 +358,6 @@ CreateSharedMemoryAndSemaphores(bool makePrivate, int port)
 		InstrShmemInit();
 
 	GpExpandVersionShmemInit();
-
-	FtsProbeShmemInit();
 
 #ifdef EXEC_BACKEND
 

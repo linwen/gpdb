@@ -18,6 +18,7 @@
 #include "naucrates/statistics/CStatsPredDisj.h"
 #include "naucrates/statistics/CStatsPredConj.h"
 #include "naucrates/statistics/CStatsPredLike.h"
+#include "naucrates/statistics/CStatsPredArrayCmp.h"
 #include "naucrates/statistics/CStatsPredUnsupported.h"
 #include "naucrates/statistics/CUpperBoundNDVs.h"
 
@@ -283,11 +284,6 @@ namespace gpnaucrates
 			// print function
 			virtual
 			IOstream &OsPrint(IOstream &os) const;
-
-#ifdef GPOS_DEBUG
-			void
-			DbgPrint() const;
-#endif
 
 			// add upper bound of source cardinality
 			virtual

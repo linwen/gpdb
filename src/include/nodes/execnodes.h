@@ -382,6 +382,9 @@ typedef struct ResultRelInfo
 	AttrNumber	ri_action_attno;	/* is this an INSERT or DELETE ? */
 	AttrNumber	ri_tupleoid_attno;	/* old OID, when updating table with OIDs */
 
+	/* list of RETURNING expressions */
+	List	   *ri_returningList;
+
 	ProjectionInfo *ri_projectReturning;
 	ProjectionInfo *ri_onConflictSetProj;
 	List	   *ri_onConflictSetWhere;
@@ -389,7 +392,6 @@ typedef struct ResultRelInfo
 
 	struct AppendOnlyInsertDescData *ri_aoInsertDesc;
 	struct AOCSInsertDescData *ri_aocsInsertDesc;
-	struct ExternalInsertDescData *ri_extInsertDesc;
 
 	RelationDeleteDesc ri_deleteDesc;
 	RelationUpdateDesc ri_updateDesc;
@@ -429,15 +431,6 @@ typedef struct ResultRelInfo
 	HeapTuple	*bufferedTuples;
 	Size		bufferedTuplesSize;
 } ResultRelInfo;
-
-typedef struct ShareNodeEntry
-{
-	NodeTag		type;
-
-	Node	   *sharePlan;
-	Node	   *shareState;
-	int			refcount; /* reference count to guard from too-eager-free risk */
-} ShareNodeEntry;
 
 /*
  * PartitionAccessMethods
@@ -627,7 +620,7 @@ typedef struct EState
 	List	   *es_cursorPositions;
 
 	/* Data structure for node sharing */
-	List	  **es_sharenode;
+	List	   *es_sharenode;
 
 	int			active_recv_id;
 	void	   *motionlayer_context;  /* Motion Layer state */
@@ -857,19 +850,6 @@ typedef struct GenericExprState
 	ExprState	xprstate;
 	ExprState  *arg;			/* state of my child node */
 } GenericExprState;
-
-/* ----------------
- *         Generic tuplestore structure
- *	 used to communicate between ShareInputScan nodes,
- *	 Materialize and Sort
- *
- * ----------------
- */
-typedef union GenericTupStore
-{
-	struct NTupleStore        *matstore;     /* Used by Materialize */
-	void	   *sortstore;	/* Used by Sort */
-} GenericTupStore;
 
 /* ----------------
  *		WholeRowVarExprState node
@@ -1166,8 +1146,8 @@ typedef struct SubPlanState
 	FmgrInfo   *tab_eq_funcs;	/* equality functions for table datatype(s) */
 	FmgrInfo   *lhs_hash_funcs; /* hash functions for lefthand datatype(s) */
 	FmgrInfo   *cur_eq_funcs;	/* equality functions for LHS vs. table */
-	void	   *ts_pos;
-	GenericTupStore *ts_state;
+
+	Tuplestorestate *ts_state;
 } SubPlanState;
 
 /* ----------------
@@ -2109,11 +2089,11 @@ typedef struct FunctionScanState
 
 	/* tuplestore info when function scan run as initplan */
 	bool		resultInTupleStore; /* function result stored in tuplestore */
-	void       *ts_pos;				/* accessor to the tuplestore */
-	GenericTupStore *ts_state;		/* tuple store state */
+	struct Tuplestorestate *ts_state;	/* tuple store state */
+	int			initplanId;			/* initplan is for function execute on initplan */
 } FunctionScanState;
 
-extern void function_scan_create_bufname_prefix(char *p, int size);
+extern void function_scan_create_bufname_prefix(char *p, int size, int initplan_id);
 
 /* ----------------
  * TableFunctionState information
@@ -2478,15 +2458,12 @@ typedef struct MaterialState
 	ScanState	ss;				/* its first field is NodeTag */
 	int			eflags;			/* capability flags to pass to tuplestore */
 	bool		eof_underlying; /* reached end of underlying plan? */
+	Tuplestorestate *tuplestorestate;
+
 	bool		ts_destroyed;	/* called destroy tuple store? */
 
 	bool		delayEagerFree;		/* is is safe to free memory used by this node,
 									 * when this node has outputted its last row? */
-
-	GenericTupStore *ts_state;	/* private state of tuplestore.c */
-	void	   *ts_pos;
-	void	   *ts_markpos;
-	void	   *share_lk_ctxt;
 } MaterialState;
 
 /* ----------------
@@ -2495,26 +2472,25 @@ typedef struct MaterialState
  *		State of each scanner of the ShareInput node
  * ----------------
  */
+struct shareinput_local_state;
+struct shareinput_Xslice_reference;
+struct NTupleStore;
+struct NTupleStoreAccessor;
+
 typedef struct ShareInputScanState
 {
 	ScanState	ss;
-	/*
-	 * Depends on share_type, we should have a tuplestore_state, tuplestore_pos
-	 * or tuplesort_state, tuplesort_pos
-	 */
-	GenericTupStore *ts_state;
-	void	   *ts_pos;
-	void	   *ts_markpos;
 
-	void	   *share_lk_ctxt;
-	bool		freed; /* is this node already freed? */
+	Tuplestorestate *ts_state;
+	int			ts_pos;
+
+	struct shareinput_local_state *local_state;
+	struct shareinput_Xslice_reference *ref;
+
+	bool		isready;
 } ShareInputScanState;
 
 /* XXX Should move into buf file */
-extern void *shareinput_reader_waitready(int share_id, PlanGenerator planGen);
-extern void *shareinput_writer_notifyready(int share_id, int nsharer_xslice_notify_ready, PlanGenerator planGen);
-extern void shareinput_reader_notifydone(void *, int share_id);
-extern void shareinput_writer_waitdone(void *, int share_id, int nsharer_xslice_wait_done);
 extern void shareinput_create_bufname_prefix(char* p, int size, int share_id);
 
 /* ----------------
@@ -2530,14 +2506,11 @@ typedef struct SortState
 	bool		sort_Done;		/* sort completed yet? */
 	bool		bounded_Done;	/* value of bounded we did the sort with */
 	int64		bound_Done;		/* value of bound we did the sort with */
-	GenericTupStore *tuplesortstate; /* private state of tuplesort.c */
+	void	   *tuplesortstate; /* private state of tuplesort.c */
 	bool		noduplicates;	/* true if discard duplicate rows */
 
 	bool		delayEagerFree;		/* is is safe to free memory used by this node,
 									 * when this node has outputted its last row? */
-
-	void	   *share_lk_ctxt;
-
 } SortState;
 
 /* ---------------------
@@ -2932,6 +2905,8 @@ typedef struct LimitState
 	LimitStateCond lstate;		/* state machine status, as above */
 	int64		position;		/* 1-based index of last tuple returned */
 	TupleTableSlot *subSlot;	/* tuple last obtained from subplan */
+
+	bool		expect_rescan;
 } LimitState;
 
 /*

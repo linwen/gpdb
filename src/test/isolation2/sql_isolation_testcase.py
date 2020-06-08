@@ -366,9 +366,7 @@ class SQLIsolationExecutor(object):
                 self.con = self.connectdb(given_dbname=self.dbname,
                                           given_host=hostname,
                                           given_port=port,
-                                          given_opt="-c gp_session_role=utility",
-                                          given_user=user,
-                                          given_passwd=passwd)
+                                          given_opt="-c gp_role=utility")
             elif self.mode == "standby":
                 # Connect to standby even when it's role is recorded
                 # as mirror.  This is useful for scenarios where a
@@ -422,6 +420,22 @@ class SQLIsolationExecutor(object):
                     else:
                         raise
             return con
+
+        def get_hostname_port(self, contentid, role):
+            """
+                Gets the port number/hostname combination of the
+                contentid and role
+            """
+            query = ("SELECT hostname, port FROM gp_segment_configuration WHERE"
+                     " content = %s AND role = '%s'") % (contentid, role)
+            con = self.connectdb(self.dbname, given_opt="-c gp_role=utility")
+            r = con.query(query).getresult()
+            con.close()
+            if len(r) == 0:
+                raise Exception("Invalid content %s" % contentid)
+            if r[0][0] == socket.gethostname():
+                return (None, int(r[0][1]))
+            return (r[0][0], int(r[0][1]))
 
         # Print out a pygresql result set (a Query object, after the query
         # has been executed), in a format that imitates the default

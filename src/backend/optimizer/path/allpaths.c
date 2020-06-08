@@ -144,6 +144,7 @@ static void remove_unused_subquery_outputs(Query *subquery, RelOptInfo *rel);
 
 static void bring_to_outer_query(PlannerInfo *root, RelOptInfo *rel, List *outer_quals);
 static void bring_to_singleQE(PlannerInfo *root, RelOptInfo *rel);
+static bool is_query_contain_limit_groupby(Query *parse);
 
 
 /*
@@ -1990,10 +1991,17 @@ set_subquery_pathlist(PlannerInfo *root, RelOptInfo *rel,
 		 * it to singleQE and materialize the data because we
 		 * cannot pass params across motion.
 		 */
-		config->force_singleQE = false;
 		if ((!bms_is_empty(required_outer)) &&
-			(subquery->limitCount || subquery->limitOffset))
+			is_query_contain_limit_groupby(subquery))
 			config->force_singleQE = true;
+
+		/*
+		 * Greenplum specific behavior:
+		 * config->may_rescan is used to guide if
+		 * we should add materialize path over motion
+		 * in the left tree of a join.
+		 */
+		config->may_rescan = config->may_rescan || !bms_is_empty(required_outer);
 
 		/* plan_params should not be in use in current query level */
 		Assert(root->plan_params == NIL);
@@ -3501,6 +3509,31 @@ remove_unused_subquery_outputs(Query *subquery, RelOptInfo *rel)
 										   exprTypmod(texpr),
 										   exprCollation(texpr));
 	}
+}
+
+static bool
+is_query_contain_limit_groupby(Query *parse)
+{
+	if (parse->limitCount || parse->limitOffset ||
+		parse->groupClause || parse->groupingSets || parse->distinctClause)
+		return true;
+
+	if (parse->setOperations)
+	{
+		SetOperationStmt *sop_stmt = (SetOperationStmt *) (parse->setOperations);
+		RangeTblRef   *larg = (RangeTblRef *) sop_stmt->larg;
+		RangeTblRef   *rarg = (RangeTblRef *) sop_stmt->rarg;
+		RangeTblEntry *lrte = list_nth(parse->rtable, larg->rtindex-1);
+		RangeTblEntry *rrte = list_nth(parse->rtable, rarg->rtindex-1);
+
+		if ((lrte->rtekind == RTE_SUBQUERY &&
+			 is_query_contain_limit_groupby(lrte->subquery)) ||
+			(rrte->rtekind == RTE_SUBQUERY &&
+			 is_query_contain_limit_groupby(rrte->subquery)))
+			return true;
+	}
+
+	return false;
 }
 
 /*****************************************************************************

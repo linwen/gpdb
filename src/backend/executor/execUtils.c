@@ -1062,37 +1062,6 @@ ShutdownExprContext(ExprContext *econtext, bool isCommit)
 	MemoryContextSwitchTo(oldcontext);
 }
 
-
-/* ---------------------------------------------------------------
- * 		Share Input utilities
- * ---------------------------------------------------------------
- */
-ShareNodeEntry *
-ExecGetShareNodeEntry(EState* estate, int shareidx, bool fCreate)
-{
-	Assert(shareidx >= 0);
-	Assert(estate->es_sharenode != NULL);
-
-	if(!fCreate)
-	{
-		if(shareidx >= list_length(*estate->es_sharenode))
-			return NULL;
-	}
-	else
-	{
-		while(list_length(*estate->es_sharenode) <= shareidx)
-		{
-			ShareNodeEntry *n = makeNode(ShareNodeEntry);
-			n->sharePlan = NULL;
-			n->shareState = NULL;
-
-			*estate->es_sharenode = lappend(*estate->es_sharenode, n);
-		}
-	}
-
-	return (ShareNodeEntry *) list_nth(*estate->es_sharenode, shareidx);
-}
-
 /*
  * flatten_logic_exprs
  * This function is only used by ExecPrefetchJoinQual.
@@ -1265,8 +1234,11 @@ ExecPrefetchJoinQual(JoinState *node)
 
 
 static void
-FillSliceGangInfo(ExecSlice *slice, int numsegments, DirectDispatchInfo *dd)
+FillSliceGangInfo(ExecSlice *slice, PlanSlice *ps)
 {
+	int numsegments = ps->numsegments;
+	DirectDispatchInfo *dd = &ps->directDispatch;
+
 	switch (slice->gangType)
 	{
 		case GANGTYPE_UNALLOCATED:
@@ -1297,7 +1269,7 @@ FillSliceGangInfo(ExecSlice *slice, int numsegments, DirectDispatchInfo *dd)
 			break;
 		case GANGTYPE_SINGLETON_READER:
 			slice->planNumSegments = 1;
-			slice->segments = list_make1_int(gp_session_id % numsegments);
+			slice->segments = list_make1_int(ps->segindex);
 			break;
 		default:
 			elog(ERROR, "unexpected gang type");
@@ -1334,9 +1306,6 @@ InitSliceTable(EState *estate, PlannedStmt *plannedstmt)
 	table = makeNode(SliceTable);
 	table->instrument_options = INSTRUMENT_NONE;
 	table->hasMotions = false;
-
-	/* Each slice table has a unique-id. */
-	table->ic_instance_id = ++gp_interconnect_id;
 
 	/*
 	 * Initialize the executor slice table.
@@ -1391,7 +1360,7 @@ InitSliceTable(EState *estate, PlannedStmt *plannedstmt)
 		currExecSlice->rootIndex = rootIndex;
 		currExecSlice->gangType = currPlanSlice->gangType;
 
-		FillSliceGangInfo(currExecSlice, currPlanSlice->numsegments, &currPlanSlice->directDispatch);
+		FillSliceGangInfo(currExecSlice, currPlanSlice);
 	}
 	table->numSlices = numSlices;
 
@@ -1598,14 +1567,7 @@ void mppExecutorFinishup(QueryDesc *queryDesc)
 	/* Teardown the Interconnect */
 	if (estate->es_interconnect_is_setup)
 	{
-		/*
-		 * MPP-3413: If we got here during cancellation of a cursor,
-		 * we need to set the "forceEos" argument correctly --
-		 * otherwise we potentially hang (cursors cancel on the QEs,
-		 * mark the estate to "cancelUnfinished" and then try to do a
-		 * normal interconnect teardown).
-		 */
-		TeardownInterconnect(estate->interconnect_context, estate->cancelUnfinished);
+		TeardownInterconnect(estate->interconnect_context, false);
 		estate->interconnect_context = NULL;
 		estate->es_interconnect_is_setup = false;
 	}
@@ -1693,7 +1655,7 @@ void mppExecutorCleanup(QueryDesc *queryDesc)
 	/* Clean up the interconnect. */
 	if (estate->es_interconnect_is_setup)
 	{
-		TeardownInterconnect(estate->interconnect_context, true /* force EOS */);
+		TeardownInterconnect(estate->interconnect_context, true);
 		estate->es_interconnect_is_setup = false;
 	}
 

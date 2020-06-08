@@ -423,8 +423,8 @@ InitLocks(void)
 	/* Allow for extra entries if resource locking is enabled. */
 	if (Gp_role == GP_ROLE_DISPATCH && IsResQueueEnabled())
 	{
-		add_size(max_table_size, NRESLOCKENTS() );
-		//add_size(max_plock_table_size, NRESPROCLOCKENTS() );
+		max_table_size = add_size(max_table_size, NRESLOCKENTS() );
+		max_table_size = add_size(max_table_size, NRESPROCLOCKENTS() );
 	}
 
 	init_table_size = max_table_size / 2;
@@ -848,9 +848,9 @@ LockAcquireExtended(const LOCKTAG *locktag,
 	
 	if (lockmethodid == DEFAULT_LOCKMETHOD && locktag->locktag_type != LOCKTAG_TRANSACTION)
 	{
-		if (Gp_role == GP_ROLE_EXECUTE && !Gp_is_writer)
+		if (IS_QUERY_EXECUTOR_BACKEND() && !Gp_is_writer)
 		{	
-			if (lockHolderProcPtr == NULL || lockHolderProcPtr == MyProc)
+			if (lockHolderProcPtr == MyProc)
 			{
 				/* Find the guy who should manage our locks */
 				PGPROC * proc = FindProcByGpSessionId(gp_session_id);
@@ -871,7 +871,9 @@ LockAcquireExtended(const LOCKTAG *locktag,
 					ereport(FATAL,
 							(errcode(ERRCODE_GP_INTERCONNECTION_ERROR),
 							 errmsg(WRITER_IS_MISSING_MSG),
-							 errdetail("lock [%u,%u] %s %d", locktag->locktag_field1,
+							 errdetail("lock [%u,%u] %s %d. "
+									   "Probably because writer gang is gone somehow. "
+									   "Maybe try rerunning.", locktag->locktag_field1,
 									   locktag->locktag_field2, lock_mode_names[lockmode],
 									   (int)locktag->locktag_type)));
 			}
@@ -1133,7 +1135,7 @@ LockAcquireExtended(const LOCKTAG *locktag,
 			return LOCKACQUIRE_NOT_AVAIL;
 		}
 
-		if (Gp_role == GP_ROLE_EXECUTE)
+		if (IS_QUERY_EXECUTOR_BACKEND())
 		{
 			if (!Gp_is_writer)
 				elog(LOG,"Reader gang member waiting on a lock [%u,%u] %s",
@@ -3817,14 +3819,14 @@ LockShmemSize(void)
 
 	if (Gp_role == GP_ROLE_DISPATCH && IsResQueueEnabled())
 	{
-		add_size(max_table_size, NRESLOCKENTS() );
+		max_table_size = add_size(max_table_size, NRESLOCKENTS() );
 	}
 
 	size = add_size(size, hash_estimate_size(max_table_size, sizeof(LOCK)));
 	
 	if (Gp_role == GP_ROLE_DISPATCH && IsResQueueEnabled())
 	{
-		add_size(max_table_size, NRESPROCLOCKENTS() );
+		max_table_size = add_size(max_table_size, NRESPROCLOCKENTS() );
 	}
 
 	/* proclock hash table */

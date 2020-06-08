@@ -325,13 +325,8 @@ rel_partition_key_attrs(Oid relid)
 	HeapTuple	tuple;
 	List	   *pkeys = NIL;
 
-	/*
-	 * Table pg_partition is only populated on the entry database, however, we
-	 * disable calls from outside dispatch to foil use of utility mode.  (Full
-	 * UCS may may this test obsolete.)
-	 */
-	if (Gp_session_role != GP_ROLE_DISPATCH)
-		elog(ERROR, "mode not dispatch");
+	if (!IS_QUERY_DISPATCHER())
+		elog(ERROR, "pg_partition is only accessible on entry database");
 
 	rel = heap_open(PartitionRelationId, AccessShareLock);
 
@@ -7568,19 +7563,19 @@ can_implement_dist_on_part(Relation rel, DistributedBy *dist)
 	i = 0;
 	foreach(lc, dist->keyCols)
 	{
-		IndexElem  *ielem = (IndexElem *) lfirst(lc);
+		DistributionKeyElem *dkelem = (DistributionKeyElem *) lfirst(lc);
 		AttrNumber	attnum;
 		HeapTuple	tuple;
 		bool		ok = false;
 
-		Assert(IsA(ielem, IndexElem));
+		Assert(IsA(dkelem, DistributionKeyElem));
 
-		tuple = SearchSysCacheAttName(RelationGetRelid(rel), ielem->name);
+		tuple = SearchSysCacheAttName(RelationGetRelid(rel), dkelem->name);
 		if (!HeapTupleIsValid(tuple))
 			ereport(ERROR,
 					(errcode(ERRCODE_UNDEFINED_COLUMN),
 					 errmsg("column \"%s\" of relation \"%s\" does not exist",
-							ielem->name,
+							dkelem->name,
 							RelationGetRelationName(rel))));
 
 		attnum = ((Form_pg_attribute) GETSTRUCT(tuple))->attnum;

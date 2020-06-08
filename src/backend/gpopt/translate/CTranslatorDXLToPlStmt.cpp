@@ -20,8 +20,8 @@
 #include "nodes/plannodes.h"
 #include "nodes/primnodes.h"
 #include "catalog/gp_policy.h"
-#include "catalog/pg_exttable.h"
 #include "catalog/pg_collation.h"
+#include "catalog/pg_exttable.h"
 #include "cdb/cdbutil.h"
 #include "cdb/cdbvars.h"
 #include "cdb/partitionselection.h"
@@ -1681,7 +1681,7 @@ CTranslatorDXLToPlStmt::TranslateDXLMergeJoin
 			GPOS_ASSERT(gpdb::ListLength(opexpr->args) == 2);
 			Expr *leftarg = (Expr *) gpdb::ListNth(opexpr->args, 0);
 
-			Expr *rightarg = (Expr *) gpdb::ListNth(opexpr->args, 1);
+			Expr *rightarg PG_USED_FOR_ASSERTS_ONLY = (Expr *) gpdb::ListNth(opexpr->args, 1);
 			GPOS_ASSERT(gpdb::ExprCollation((Node *) leftarg) ==
 						gpdb::ExprCollation((Node*) rightarg));
 
@@ -2000,6 +2000,8 @@ CTranslatorDXLToPlStmt::TranslateDXLMotion
 		case EdxlopPhysicalMotionRandom:
 		{
 			motion->motionType = MOTIONTYPE_HASH;
+			motion->numHashSegments = (int)motion_dxlop->GetOutputSegIdsArray()->Size();
+			GPOS_ASSERT(motion->numHashSegments > 0);
 			break;
 		}
 		case EdxlopPhysicalMotionBroadcast:
@@ -2085,6 +2087,8 @@ CTranslatorDXLToPlStmt::TranslateDXLRedistributeMotionToResultHashFilters
 		output_context
 		);
 
+	bool targetlist_modified = false;
+
 	// translate hash expr list
 	if (EdxlopPhysicalMotionRedistribute == motion_dxlop->GetDXLOperator())
 	{
@@ -2132,6 +2136,7 @@ CTranslatorDXLToPlStmt::TranslateDXLRedistributeMotionToResultHashFilters
 								     CTranslatorUtils::CreateMultiByteCharStringFromWCString(str_unnamed_col.GetBuffer()),
 								     false /* resjunk */);
 				plan->targetlist = gpdb::LAppend(plan->targetlist, (void *) target_entry);
+				targetlist_modified = true;
 			}
 
 			result->hashFilterColIdx[ul] = target_entry->resno;
@@ -2155,6 +2160,65 @@ CTranslatorDXLToPlStmt::TranslateDXLRedistributeMotionToResultHashFilters
 	plan->lefttree = child_plan;
 
 	SetParamIds(plan);
+
+	Plan *child_result = (Plan *) result;
+
+	if (targetlist_modified)
+	{
+		// If the targetlist is modified by adding any expressions, such as for
+		// hashFilterColIdx & hashFilterFuncs, add an additional Result node on top
+		// to project only the elements from the original targetlist.
+		// This is needed in case the Result node is created under the Hash
+		// operator (or any non-projecting node), which expects the targetlist of its
+		// child node to contain only elements that are to be hashed.
+		// We should not generate a plan where the target list of a non-projecting
+		// node such as Hash does not match its child. Additional expressions
+		// here can cause issues with memtuple bindings that can lead to errors.
+		Result *result = MakeNode(Result);
+
+		Plan *plan = &(result->plan);
+		plan->plan_node_id = m_dxl_to_plstmt_context->GetNextPlanId();
+
+		// keep the same costs & rows estimates
+		plan->startup_cost = child_result->startup_cost;
+		plan->total_cost = child_result->total_cost;
+		plan->plan_rows = child_result->plan_rows;
+		plan->plan_width = child_result->plan_width;
+
+		// populate the targetlist based on child_result's original targetlist
+		plan->targetlist = NIL;
+		ListCell *lc = NULL;
+		ULONG ul = 0;
+		ForEach (lc, child_result->targetlist)
+		{
+			if (ul++ >= project_list_dxlnode->Arity())
+			{
+				// done with the original targetlist, stop
+				// all expressions added after project_list_dxlnode->Arity() are
+				// not output cols, but rather hash expressions and should not be projected
+				break;
+			}
+
+			TargetEntry *te = (TargetEntry *) lfirst(lc);
+			Var *var = gpdb::MakeVar(OUTER_VAR,
+									 te->resno,
+									 gpdb::ExprType((Node *) te->expr),
+									 gpdb::ExprTypeMod((Node *) te->expr),
+									 0	/* varlevelsup */);
+			TargetEntry *new_te = gpdb::MakeTargetEntry((Expr *) var,
+														ul, /* resno */
+														te->resname,
+														te->resjunk);
+			plan->targetlist = gpdb::LAppend(plan->targetlist, new_te);
+		}
+
+		plan->qual = NIL;
+		plan->lefttree = child_result;
+
+		SetParamIds(plan);
+
+		return (Plan *) result;
+	}
 
 	return (Plan *) result;
 }
@@ -3103,6 +3167,8 @@ CTranslatorDXLToPlStmt::TranslateDXLMaterialize
 	CDXLPhysicalMaterialize *materialize_dxlop = CDXLPhysicalMaterialize::Cast(materialize_dxlnode->GetOperator());
 
 	materialize->cdb_strict = materialize_dxlop->IsEager();
+	// ensure that executor actually materializes results
+	materialize->cdb_shield_child_from_rescans = true;
 
 	// translate operator costs
 	TranslatePlanCosts
@@ -3140,20 +3206,6 @@ CTranslatorDXLToPlStmt::TranslateDXLMaterialize
 		);
 
 	plan->lefttree = child_plan;
-
-	// set spooling info
-	if (materialize_dxlop->IsSpooling())
-	{
-		materialize->share_id = materialize_dxlop->GetSpoolingOpId();
-		materialize->driver_slice = materialize_dxlop->GetExecutorSlice();
-		materialize->nsharer_xslice = materialize_dxlop->GetNumConsumerSlices();
-		materialize->share_type = (0 < materialize_dxlop->GetNumConsumerSlices()) ?
-							SHARE_MATERIAL_XSLICE : SHARE_MATERIAL;
-	}
-	else
-	{
-		materialize->share_type = SHARE_NOTSHARED;
-	}
 
 	SetParamIds(plan);
 
@@ -3220,49 +3272,6 @@ CTranslatorDXLToPlStmt::TranslateDXLCTEProducerToSharedScan
 							output_context
 							);
 
-	// if the child node is neither a sort or materialize node then add a materialize node
-	if (!IsA(child_plan, Material) && !IsA(child_plan, Sort))
-	{
-		Material *materialize = MakeNode(Material);
-		materialize->cdb_strict = false; // eager-free
-
-		Plan *materialize_plan = &(materialize->plan);
-		materialize_plan->plan_node_id = m_dxl_to_plstmt_context->GetNextPlanId();
-
-		TranslatePlanCosts
-			(
-			CDXLPhysicalProperties::PdxlpropConvert(cte_producer_dxlnode->GetProperties())->GetDXLOperatorCost(),
-			&(materialize_plan->startup_cost),
-			&(materialize_plan->total_cost),
-			&(materialize_plan->plan_rows),
-			&(materialize_plan->plan_width)
-			);
-
-		// create a target list for the newly added materialize
-		ListCell *lc_target_entry = NULL;
-		materialize_plan->targetlist = NIL;
-		ForEach (lc_target_entry, plan->targetlist)
-		{
-			TargetEntry *target_entry = (TargetEntry *) lfirst(lc_target_entry);
-			Expr *expr = target_entry->expr;
-			GPOS_ASSERT(IsA(expr, Var));
-
-			Var *var = (Var *) expr;
-			Var *var_new = gpdb::MakeVar(OUTER_VAR, var->varattno, var->vartype, var->vartypmod,	0 /* varlevelsup */);
-			var_new->varnoold = var->varnoold;
-			var_new->varoattno = var->varoattno;
-
-			TargetEntry *te_new = gpdb::MakeTargetEntry((Expr *) var_new, var->varattno, PStrDup(target_entry->resname), target_entry->resjunk);
-			materialize_plan->targetlist = gpdb::LAppend(materialize_plan->targetlist, te_new);
-		}
-
-		materialize_plan->lefttree = child_plan;
-
-		child_plan = materialize_plan;
-	}
-
-	InitializeSpoolingInfo(child_plan, cte_id);
-
 	plan->lefttree = child_plan;
 	plan->qual = NIL;
 	SetParamIds(plan);
@@ -3271,61 +3280,6 @@ CTranslatorDXLToPlStmt::TranslateDXLCTEProducerToSharedScan
 	child_contexts->Release();
 
 	return (Plan *) shared_input_scan;
-}
-
-//---------------------------------------------------------------------------
-//	@function:
-//		CTranslatorDXLToPlStmt::InitializeSpoolingInfo
-//
-//	@doc:
-//		Initialize spooling information for (1) the materialize/sort node under the
-//		shared input scan nodes representing the CTE producer node and
-//		(2) SIS nodes representing the producer/consumer nodes
-//---------------------------------------------------------------------------
-void
-CTranslatorDXLToPlStmt::InitializeSpoolingInfo
-	(
-	Plan *plan,
-	ULONG share_id
-	)
-{
-	List *shared_scan_cte_consumer_list = m_dxl_to_plstmt_context->GetCTEConsumerList(share_id);
-	GPOS_ASSERT(NULL != shared_scan_cte_consumer_list);
-
-	const ULONG num_of_shared_scan = gpdb::ListLength(shared_scan_cte_consumer_list);
-
-	ShareType share_type = SHARE_NOTSHARED;
-
-	if (IsA(plan, Material))
-	{
-		Material *materialize = (Material *) plan;
-		materialize->share_id = share_id;
-		materialize->nsharer = num_of_shared_scan;
-		share_type = SHARE_MATERIAL;
-		// the share_type is later reset to SHARE_MATERIAL_XSLICE (if needed) by the apply_shareinput_xslice
-		materialize->share_type = share_type;
-	}
-	else
-	{
-		GPOS_ASSERT(IsA(plan, Sort));
-		Sort *sort = (Sort *) plan;
-		sort->share_id = share_id;
-		sort->nsharer = num_of_shared_scan;
-		share_type = SHARE_SORT;
-		// the share_type is later reset to SHARE_SORT_XSLICE (if needed) the apply_shareinput_xslice
-		sort->share_type = share_type;
-	}
-
-	GPOS_ASSERT(SHARE_NOTSHARED != share_type);
-
-	// set the share type of the consumer nodes based on the producer
-	ListCell *lc_sh_scan_cte_consumer = NULL;
-	ForEach (lc_sh_scan_cte_consumer, shared_scan_cte_consumer_list)
-	{
-		ShareInputScan *share_input_scan_consumer = (ShareInputScan *) lfirst(lc_sh_scan_cte_consumer);
-		share_input_scan_consumer->share_type = share_type;
-		share_input_scan_consumer->driver_slice = -1; // default
-	}
 }
 
 //---------------------------------------------------------------------------

@@ -40,7 +40,6 @@
 #include "postgres.h"
 
 #include "access/appendonlywriter.h"
-#include "access/fileam.h"
 #include "access/htup_details.h"
 #include "access/sysattr.h"
 #include "access/transam.h"
@@ -364,7 +363,7 @@ standard_ExecutorStart(QueryDesc *queryDesc, int eflags)
 	/*
 	 * Shared input info is needed when ROLE_EXECUTE or sequential plan
 	 */
-	estate->es_sharenode = (List **) palloc0(sizeof(List *));
+	estate->es_sharenode = NIL;
 
 	/*
 	 * Handling of the Slice table depends on context.
@@ -391,32 +390,6 @@ standard_ExecutorStart(QueryDesc *queryDesc, int eflags)
 
 			/* set our global sliceid variable for elog. */
 			currentSliceId = LocallyExecutingSliceIndex(estate);
-
-			/* Determine OIDs for into relation, if any */
-			if (queryDesc->plannedstmt->intoClause != NULL)
-			{
-				IntoClause *intoClause = queryDesc->plannedstmt->intoClause;
-				Oid         reltablespace;
-
-				cdb_sync_oid_to_segments();
-
-				/* MPP-10329 - must always dispatch the tablespace */
-				if (intoClause->tableSpaceName)
-				{
-					reltablespace = get_tablespace_oid(intoClause->tableSpaceName, false);
-					queryDesc->ddesc->intoTableSpaceName = intoClause->tableSpaceName;
-				}
-				else
-				{
-					reltablespace = GetDefaultTablespace(intoClause->rel->relpersistence);
-
-					/* Need the real tablespace id for dispatch */
-					if (!OidIsValid(reltablespace))
-						reltablespace = MyDatabaseTableSpace;
-
-					queryDesc->ddesc->intoTableSpaceName = get_tablespace_name(reltablespace);
-				}
-			}
 
 			/* InitPlan() will acquire locks by walking the entire plan
 			 * tree -- we'd like to avoid acquiring the locks until
@@ -613,6 +586,16 @@ standard_ExecutorStart(QueryDesc *queryDesc, int eflags)
 			exec_identity = getGpExecIdentity(queryDesc, ForwardScanDirection, estate);
 		else
 			exec_identity = GP_IGNORE;
+
+		/*
+		 * If we have no slice to execute in this process, mark currentSliceId as
+		 * invalid.
+		 */
+		if (exec_identity == GP_IGNORE)
+		{
+			estate->currentSliceId = -1;
+			currentSliceId = -1;
+		}
 
 #ifdef USE_ASSERT_CHECKING
 		/* non-root on QE */
@@ -1125,6 +1108,17 @@ standard_ExecutorEnd(QueryDesc *queryDesc)
 		RemoveMotionLayer(estate->motionlayer_context);
 
 		/*
+		 * GPDB specific
+		 * Clean the special resources created by INITPLAN.
+		 * The resources have long life cycle and are used by the main plan.
+		 * It's too early to clean them in preprocess_initplans.
+		 */
+		if (queryDesc->plannedstmt->nParamExec > 0)
+		{
+			postprocess_initplans(queryDesc);
+		}
+
+		/*
 		 * Release EState and per-query memory context.
 		 */
 		FreeExecutorState(estate);
@@ -1132,6 +1126,17 @@ standard_ExecutorEnd(QueryDesc *queryDesc)
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
+
+	/*
+	 * GPDB specific
+	 * Clean the special resources created by INITPLAN.
+	 * The resources have long life cycle and are used by the main plan.
+	 * It's too early to clean them in preprocess_initplans.
+	 */
+	if (queryDesc->plannedstmt->nParamExec > 0)
+	{
+		postprocess_initplans(queryDesc);
+	}
 
     /*
      * If normal termination, let each operator clean itself up.
@@ -1466,6 +1471,14 @@ ExecCheckXactReadOnly(PlannedStmt *plannedstmt)
 			ExecutorMarkTransactionDoesWrites();
 		else
 			PreventCommandIfReadOnly(CreateCommandTag((Node *) plannedstmt));
+	}
+
+	/*
+	 * Refresh matview will write xlog.
+	 */
+	if (plannedstmt->refreshClause != NULL)
+	{
+		PreventCommandIfReadOnly(CreateCommandTag((Node *) plannedstmt));
 	}
 
     rti = 0;
@@ -2392,7 +2405,6 @@ InitResultRelInfo(ResultRelInfo *resultRelInfo,
 	resultRelInfo->ri_projectReturning = NULL;
 	resultRelInfo->ri_aoInsertDesc = NULL;
 	resultRelInfo->ri_aocsInsertDesc = NULL;
-	resultRelInfo->ri_extInsertDesc = NULL;
 	resultRelInfo->ri_deleteDesc = NULL;
 	resultRelInfo->ri_updateDesc = NULL;
 	resultRelInfo->ri_aosegno = InvalidFileSegNumber;
@@ -2411,8 +2423,6 @@ CloseResultRelInfo(ResultRelInfo *resultRelInfo)
 		appendonly_insert_finish(resultRelInfo->ri_aoInsertDesc);
 	if (resultRelInfo->ri_aocsInsertDesc)
 		aocs_insert_finish(resultRelInfo->ri_aocsInsertDesc);
-	if (resultRelInfo->ri_extInsertDesc)
-		external_insert_finish(resultRelInfo->ri_extInsertDesc);
 
 	if (resultRelInfo->ri_deleteDesc != NULL)
 	{
@@ -2822,10 +2832,6 @@ ExecutePlan(EState *estate,
 	 */
 	estate->es_direction = direction;
 
-	/*
-	 * Make sure slice dependencies are met
-	 */
-	ExecSliceDependencyNode(planstate);
 	/*
 	 * If a tuple count was supplied, we must force the plan to run without
 	 * parallelism, because we might exit early.

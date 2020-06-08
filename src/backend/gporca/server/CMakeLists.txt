@@ -141,7 +141,7 @@ SingleColumnHomogenousIndexOnRoot-AO SingleColumnHomogenousIndexOnRoot-HEAP;
 
 CStatsTest:
 Stat-Derivation-Leaf-Pattern MissingBoolColStats JoinColWithOnlyNDV UnsupportedStatsPredicate
-StatsFilter-AnyWithNewColStats;
+StatsFilter-AnyWithNewColStats EquiJoinOnExpr-Supported EquiJoinOnExpr-Unsupported;
 
 CICGMiscTest:
 BroadcastSkewedHashjoin OrderByNullsFirst ConvertHashToRandomSelect ConvertHashToRandomInsert HJN-DeeperOuter CTAS CTAS-Random CheckAsUser
@@ -151,7 +151,7 @@ UDA-AnyElement-1 UDA-AnyElement-2 Project-With-NonScalar-Func SixWayDPv2 Multipl
 
 CArrayCmpTest:
 ArrayConcat ArrayRef FoldedArrayCmp IN-ArrayCmp NOT-IN-ArrayCmp ArrayCmpAll UDA-AnyArray InClauseWithMCV
-CastedInClauseWithMCV FilterScalarCast;
+CastedInClauseWithMCV FilterScalarCast IN-Nulls-ArrayCmpAny ArrayCmp-IN-ManyElements;
 
 CProjectTest:
 ProjectWithConstant ProjectWithTextConstant ProjectSetFunction Equivalence-class-project-over-LOJ;

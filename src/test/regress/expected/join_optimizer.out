@@ -4246,23 +4246,26 @@ select * from
     (tenk1 as a1 full join (select 1 as id) as yy on (a1.unique1 = yy.id))
   on (xx.id = coalesce(yy.id));
                       QUERY PLAN                      
-------------------------------------------------------
- Hash Left Join
-   Hash Cond: ((1) = COALESCE((1)))
-   ->  Result
-   ->  Hash
-         ->  Gather Motion 3:1  (slice1; segments: 3)
-               ->  Merge Full Join
-                     Merge Cond: (unique1 = (1))
-                     ->  Sort
-                           Sort Key: unique1
-                           ->  Seq Scan on tenk1
-                     ->  Sort
-                           Sort Key: (1)
-                           ->  Result
+------------------------------------------------------------------
+ Gather Motion 3:1  (slice1; segments: 3)
+   ->  Hash Left Join
+         Hash Cond: ((1) = COALESCE((1)))
+         ->  Result
+               ->  Result
+         ->  Hash
+               ->  Redistribute Motion 3:3  (slice2; segments: 3)
+                     Hash Key: COALESCE((1))
+                     ->  Merge Full Join
+                           Merge Cond: (unique1 = (1))
+                           ->  Sort
+                                 Sort Key: unique1
+                                 ->  Seq Scan on tenk1
+                           ->  Sort
+                                 Sort Key: (1)
                                  ->  Result
- Optimizer: Pivotal Optimizer (GPORCA) version 3.83.0
-(15 rows)
+                                       ->  Result
+ Optimizer: Pivotal Optimizer (GPORCA)
+(18 rows)
 
 select * from
   (select 1 as id) as xx
@@ -5528,12 +5531,10 @@ select * from int4_tbl a,
 ------------------------------------------------------------------------
  Nested Loop
    Output: a.f1, b.f1, c.q1, c.q2
-   ->  Materialize
+   ->  Gather Motion 3:1  (slice1; segments: 3)
          Output: a.f1
-         ->  Gather Motion 3:1  (slice1; segments: 3)
+         ->  Seq Scan on public.int4_tbl a
                Output: a.f1
-               ->  Seq Scan on public.int4_tbl a
-                     Output: a.f1
    ->  Materialize
          Output: b.f1, c.q1, c.q2
          ->  Hash Right Join
@@ -5603,13 +5604,13 @@ select * from
   (select b.q1 as bq1, c.q1 as cq1, least(a.q1,b.q1,c.q1) from
    int8_tbl b cross join int8_tbl c) ss
   on a.q2 = ss.bq1;
-ERROR:  could not devise a query plan for the given query (pathnode.c:469)
+ERROR:  could not devise a query plan for the given query (pathnode.c:472)
 select * from
   int8_tbl a left join lateral
   (select b.q1 as bq1, c.q1 as cq1, least(a.q1,b.q1,c.q1) from
    int8_tbl b cross join int8_tbl c) ss
   on a.q2 = ss.bq1;
-ERROR:  could not devise a query plan for the given query (pathnode.c:469)
+ERROR:  could not devise a query plan for the given query (pathnode.c:472)
 -- case requiring nested PlaceHolderVars
 explain (verbose, costs off)
 select * from

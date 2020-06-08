@@ -575,7 +575,6 @@ _copyExternalScanInfo(const ExternalScanInfo *from)
 	ExternalScanInfo *newnode = makeNode(ExternalScanInfo);
 
 	COPY_NODE_FIELD(uriList);
-	COPY_STRING_FIELD(fmtOptString);
 	COPY_SCALAR_FIELD(fmtType);
 	COPY_SCALAR_FIELD(isMasterOnly);
 	COPY_SCALAR_FIELD(rejLimit);
@@ -825,6 +824,7 @@ _copyFunctionScan(const FunctionScan *from)
 	COPY_SCALAR_FIELD(funcordinality);
 	COPY_NODE_FIELD(param);
 	COPY_SCALAR_FIELD(resultInTupleStore);
+	COPY_SCALAR_FIELD(initplanId);
 
 	return newnode;
 }
@@ -1091,9 +1091,11 @@ _copyShareInputScan(const ShareInputScan *from)
 
 	/* copy node superclass fields */
 	CopyPlanFields((Plan *) from, (Plan *) newnode);
-	COPY_SCALAR_FIELD(share_type);
+	COPY_SCALAR_FIELD(cross_slice);
 	COPY_SCALAR_FIELD(share_id);
-	COPY_SCALAR_FIELD(driver_slice);
+	COPY_SCALAR_FIELD(producer_slice_id);
+	COPY_SCALAR_FIELD(this_slice_id);
+	COPY_SCALAR_FIELD(nconsumers);
 
 	return newnode;
 }
@@ -1113,11 +1115,6 @@ _copyMaterial(const Material *from)
 	CopyPlanFields((const Plan *) from, (Plan *) newnode);
 	COPY_SCALAR_FIELD(cdb_strict);
 	COPY_SCALAR_FIELD(cdb_shield_child_from_rescans);
-	COPY_SCALAR_FIELD(share_type);
-	COPY_SCALAR_FIELD(share_id);
-	COPY_SCALAR_FIELD(driver_slice);
-	COPY_SCALAR_FIELD(nsharer);
-	COPY_SCALAR_FIELD(nsharer_xslice);
 
     return newnode;
 }
@@ -1145,11 +1142,6 @@ _copySort(const Sort *from)
     /* CDB */
 	COPY_SCALAR_FIELD(noduplicates);
 
-	COPY_SCALAR_FIELD(share_type);
-	COPY_SCALAR_FIELD(share_id);
-	COPY_SCALAR_FIELD(driver_slice);
-	COPY_SCALAR_FIELD(nsharer);
-	COPY_SCALAR_FIELD(nsharer_xslice);
 	return newnode;
 }
 
@@ -1437,6 +1429,7 @@ _copyMotion(const Motion *from)
 	COPY_POINTER_FIELD(nullsFirst, from->numSortCols * sizeof(bool));
 
 	COPY_SCALAR_FIELD(segidColIdx);
+	COPY_SCALAR_FIELD(numHashSegments);
 
 	if (from->senderSliceInfo)
 	{
@@ -3187,6 +3180,18 @@ _copyColumnDef(const ColumnDef *from)
 	return newnode;
 }
 
+static DistributionKeyElem *
+_copyDistributionKeyElem(const DistributionKeyElem *from)
+{
+	DistributionKeyElem  *newnode = makeNode(DistributionKeyElem);
+
+	COPY_STRING_FIELD(name);
+	COPY_NODE_FIELD(opclass);
+	COPY_LOCATION_FIELD(location);
+
+	return newnode;
+}
+
 static ColumnReferenceStorageDirective *
 _copyColumnReferenceStorageDirective(const ColumnReferenceStorageDirective *from)
 {
@@ -4791,6 +4796,7 @@ _copyCreateForeignTableStmt(const CreateForeignTableStmt *from)
 
 	COPY_STRING_FIELD(servername);
 	COPY_NODE_FIELD(options);
+	COPY_NODE_FIELD(distributedBy);
 
 	return newnode;
 }
@@ -6355,6 +6361,9 @@ copyObject(const void *from)
 			break;
 		case T_ColumnDef:
 			retval = _copyColumnDef(from);
+			break;
+		case T_DistributionKeyElem:
+			retval = _copyDistributionKeyElem(from);
 			break;
 		case T_ColumnReferenceStorageDirective:
 			retval = _copyColumnReferenceStorageDirective(from);

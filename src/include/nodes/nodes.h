@@ -42,7 +42,6 @@ typedef enum NodeTag
 	T_CdbProcess,
 	T_SliceTable,
 	T_CursorPosInfo,
-	T_ShareNodeEntry,
 	T_PartitionState,
 	T_QueryDispatchDesc,
 	T_OidAssignment,
@@ -576,6 +575,7 @@ typedef enum NodeTag
 	T_OnConflictClause,
 	T_CommonTableExpr,
 	T_ColumnReferenceStorageDirective,
+	T_DistributionKeyElem,
 	T_RoleSpec,
 
 	/*
