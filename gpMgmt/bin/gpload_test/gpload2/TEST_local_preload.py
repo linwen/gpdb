@@ -1,4 +1,6 @@
-from TEST_local_base import *
+from TEST_local_base import write_config_file, psql_run, mkpath
+from TEST_local_base import prepare_before_test, drop_tables, runfile
+from TEST_local_base import runfile, copy_data, run
 
 @prepare_before_test(num=601, times=1)
 def test_601_with_trucate_true():
