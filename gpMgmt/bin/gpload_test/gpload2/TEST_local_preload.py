@@ -54,3 +54,9 @@ def test_605_with_reuse_tables_true_table_changed():
 def test_606_with_reuse_tables_true_port_changed():
     "606 gpload with reuse_tables is true, but port is changed, external table is not reused"
     write_config_file(mode='insert',reuse_tables=True,fast_match=False,file='data_file.txt',table='texttable', input_port='8899',error_limit=1002, truncate=False)
+
+def test_607_clear_database():
+    "drop tables in database and recreate them to clear the environment"
+    file = mkpath('setup.sql')
+    runfile(file)
+
