@@ -169,10 +169,12 @@ const CTestUtils::STestCase rgtc[] = {
 	 "../data/dxl/expressiontests/DynamicGetNLJoinPartKeyPlan.xml"},
 	{"../data/dxl/expressiontests/DynamicGetNLJoinOtherKeyQuery.xml",
 	 "../data/dxl/expressiontests/DynamicGetNLJoinOtherKeyPlan.xml"},
-	{"../data/dxl/expressiontests/DynamicGetBooleanQuery.xml",
-	 "../data/dxl/expressiontests/DynamicGetBooleanPlan.xml"},
-	{"../data/dxl/expressiontests/DynamicGetBooleanNotQuery.xml",
-	 "../data/dxl/expressiontests/DynamicGetBooleanNotPlan.xml"},
+	// GPDB_12_MERGE_FIXME: Re-enable once ORCA supports constraint derivation on
+	// bool columns
+	//	{"../data/dxl/expressiontests/DynamicGetBooleanQuery.xml",
+	//	 "../data/dxl/expressiontests/DynamicGetBooleanPlan.xml"},
+	//	{"../data/dxl/expressiontests/DynamicGetBooleanNotQuery.xml",
+	//	 "../data/dxl/expressiontests/DynamicGetBooleanNotPlan.xml"},
 	{"../data/dxl/expressiontests/DynamicGetMultiJoinQuery.xml",
 	 "../data/dxl/expressiontests/DynamicGetMultiJoinPlan.xml"},
 	{"../data/dxl/expressiontests/CoalesceQuery.xml",
@@ -255,7 +257,7 @@ CTranslatorExprToDXLTest::EresUnittest_RunTests()
 	CMDAccessor mda(mp, CMDCache::Pcache(), CTestUtils::m_sysidDefault, pmdp);
 
 	// install opt context in TLS
-	CAutoOptCtxt aoc(mp, &mda, NULL, /* pceeval */
+	CAutoOptCtxt aoc(mp, &mda, nullptr, /* pceeval */
 					 CTestUtils::GetCostModel(mp));
 
 	const ULONG ulTests = GPOS_ARRAY_SIZE(rgtc);

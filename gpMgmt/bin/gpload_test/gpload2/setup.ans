@@ -56,3 +56,5 @@ CREATE TABLE testtruncate (
 CREATE TABLE
 INSERT INTO testtruncate VALUES('ttt','ttgt','shpits', '2011-06-01 12:30:30',16,732,834567,45.67,789.123,7.12345,156.456178);
 INSERT 0 1
+CREATE TABLE prices (itemnumber integer, price decimal ) DISTRIBUTED BY (itemnumber)
+CREATE TABLE
