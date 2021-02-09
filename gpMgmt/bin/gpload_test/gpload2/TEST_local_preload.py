@@ -25,6 +25,7 @@ def test_602_with_reuse_tables_true():
     copy_data('external_file_04.txt','data_file.txt')
     write_config_file(mode='insert',reuse_tables=True,fast_match=False,file='data_file.txt',table='texttable', error_limit=1002, truncate=False)
 
+''' The case 603 ~ 607 depend on the previous one, they should be serially tested together '''
 @prepare_before_test(num=603, times=2)
 def test_603_with_reuse_tables_true_and_staging():
     "603 gpload with reuse_tables is true and staging_table"
@@ -39,7 +40,7 @@ def test_603_with_reuse_tables_true_and_staging():
 
 @prepare_before_test(num=604, times=1)
 def test_604_with_reuse_tables_true_table_changed():
-    "604 gpload with reuse_tables is true and specifying a staging_table, but table's schema changed. so staging table dosen't match the destination table"
+    "604 gpload with reuse_tables is true and specifying a staging_table, but table's schema is changed. so staging table dosen't match the destination table, load failed"
     psql_run(cmd="ALTER TABLE texttable ADD column n8 text",dbname='reuse_gptest')
     copy_data('external_file_08.txt','data_file.txt')
     write_config_file(mode='insert',reuse_tables=True,fast_match=False,file='data_file.txt',table='texttable', staging_table='staging_test', error_limit=1002, truncate=False)
@@ -59,4 +60,3 @@ def test_607_clear_database():
     "drop tables in database and recreate them to clear the environment"
     file = mkpath('setup.sql')
     runfile(file)
-
