@@ -57,7 +57,6 @@ cdbgang_createGang_async(List *segments, SegmentType segmentType)
 	int		successful_connections = 0;
 	int		poll_timeout = 0;
 	int		i = 0;
-	int		j = 0;
 	int		size = 0;
 	bool	retry = false;
 	int		totalSegs = 0;
@@ -78,6 +77,7 @@ cdbgang_createGang_async(List *segments, SegmentType segmentType)
 	newGangDefinition = NULL;
 	/* allocate and initialize a gang structure */
 	newGangDefinition = buildGangDefinition(segments, segmentType);
+	CurrentGangCreating = newGangDefinition;
 	/*
 	 * If we're in a global transaction, and there is some primary segment down,
 	 * we have to error out so that the current global transaction can be aborted.
@@ -90,19 +90,11 @@ cdbgang_createGang_async(List *segments, SegmentType segmentType)
 		{
 			if (FtsIsSegmentDown(newGangDefinition->db_descriptors[i]->segment_database_info))
 			{
-				for (j = 0; j < size; j++)
-				{
-					SegmentDatabaseDescriptor *segdbDesc = newGangDefinition->db_descriptors[j];
-					Assert(segdbDesc != NULL);
-					if (segdbDesc->segment_database_info->numActiveQEs > 0)
-						cdbcomponent_recycleIdleQE(segdbDesc, true);
-				}
 				DisconnectAndDestroyAllGangs(true);
 				elog(ERROR, "gang was lost due to cluster reconfiguration");
 			}
 		}
 	}
-	CurrentGangCreating = newGangDefinition;
 	totalSegs = getgpsegmentCount();
 	Assert(totalSegs > 0);
 
