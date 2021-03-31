@@ -81,7 +81,7 @@ cdbgang_createGang_async(List *segments, SegmentType segmentType)
 	/*
 	 * If we're in a global transaction, and there is some primary segment down,
 	 * we have to error out so that the current global transaction can be aborted.
-	 * Before error out, we need to recycle QEs, destroy the gang, and reset
+	 * Before error out, we need to clean up QEs, destroy the gang, and reset
 	 * the session.
 	 */
 	if (IsTransactionState())
