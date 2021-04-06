@@ -73,18 +73,29 @@ select content, preferred_role, role, status, mode from gp_segment_configuration
  0       | m              | p    | u      | n    
 (2 rows)
 
-!\retcode gprecoverseg -a --no-progress 
+!\retcode gprecoverseg -a --no-progress;
+-- start_ignore
+-- end_ignore
+(exited with code 0)
+
 -- loop while segments come in sync
 select wait_until_all_segments_synchronized();
--- start_ignore
--- end_ignore
-(exited with code 1)
+ wait_until_all_segments_synchronized 
+--------------------------------------
+ OK                                   
+(1 row)
 
-!\retcode gprecoverseg -ar 
-select wait_until_all_segments_synchronized();
+!\retcode gprecoverseg -ar;
 -- start_ignore
 -- end_ignore
-(exited with code 1)
+(exited with code 0)
+
+-- loop while segments come in sync
+select wait_until_all_segments_synchronized();
+ wait_until_all_segments_synchronized 
+--------------------------------------
+ OK                                   
+(1 row)
 
 -- verify no segment is down after recovery
 select count(*) from gp_segment_configuration where status = 'd';
