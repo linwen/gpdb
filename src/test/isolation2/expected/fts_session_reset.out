@@ -73,7 +73,7 @@ select content, preferred_role, role, status, mode from gp_segment_configuration
  0       | m              | p    | u      | n    
 (2 rows)
 
-!\retcode gprecoverseg -a --no-progress;
+!\retcode gprecoverseg -aF --no-progress;
 -- start_ignore
 -- end_ignore
 (exited with code 0)
