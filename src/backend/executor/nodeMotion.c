@@ -207,7 +207,7 @@ ExecMotion(MotionState *node)
 			if (gp_enable_motion_mk_sort)
 				tuple = execMotionSortedReceiver_mk(node);
 			else
-				tuple = execMotionSortedReceiver(node);
+				tuple = execMotionSorted    Receiver(node);
 		}
 		else
 			tuple = execMotionUnsortedReceiver(node);
