@@ -270,7 +270,8 @@ HandleFtsWalRepProbe(void)
 	}
 	else
 	{
-		GetMirrorStatus(&response);
+		WalSnd *walsender = FindGpdbWalSnd();
+		GetMirrorStatus(walsender, &response);
 
 		/*
 		 * We check response.IsSyncRepEnabled even though syncrep is again checked
@@ -309,7 +310,9 @@ HandleFtsWalRepSyncRepOff(void)
 	ereport(LOG,
 			(errmsg("turning off synchronous wal replication due to FTS request")));
 	UnsetSyncStandbysDefined();
-	GetMirrorStatus(&response);
+
+	WalSnd *walsender = FindGpdbWalSnd();
+	GetMirrorStatus(walsender, &response);
 
 	SendFtsResponse(&response, FTS_MSG_SYNCREP_OFF);
 }

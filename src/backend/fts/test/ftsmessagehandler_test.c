@@ -75,6 +75,16 @@ test_HandleFtsWalRepProbePrimary(void **state)
 	mockresponse.IsRoleMirror = false;
 	mockresponse.RequestRetry = false;
 
+	/* Mock that the mirror is up */
+	WalSnd walsnd;
+	walsnd.pid = 12345;
+	walsnd.state = WALSNDSTATE_CATCHUP;
+	walsnd.is_for_gp_walreceiver = true;
+	walsnd.write = 12345;
+	SpinLockInit(&walsnd.mutex);
+
+	will_return(FindGpdbWalSnd, &walsnd);
+	expect_any(GetMirrorStatus, walsender);
 	expect_any(GetMirrorStatus, response);
 	will_assign_memory(GetMirrorStatus, response, &mockresponse, sizeof(FtsResponse));
 	will_be_called(GetMirrorStatus);
@@ -99,6 +109,8 @@ test_HandleFtsWalRepSyncRepOff(void **state)
 	mockresponse.IsSyncRepEnabled = false;
 	mockresponse.RequestRetry = false;
 
+	will_return(FindGpdbWalSnd, NULL);
+	expect_value(GetMirrorStatus, walsender, NULL);
 	expect_any(GetMirrorStatus, response);
 	will_assign_memory(GetMirrorStatus, response, &mockresponse, sizeof(FtsResponse));
 	will_be_called(GetMirrorStatus);
