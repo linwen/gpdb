@@ -556,7 +556,7 @@ FindGpdbWalSnd(void)
 
 	LWLockRelease(SyncRepLock);
 
-	return walsender;
+	return found ? walsender : NULL;
 }
 
 /*
