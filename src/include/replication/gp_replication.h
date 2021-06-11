@@ -73,7 +73,8 @@ extern void FTSReplicationStatusUpdateForWalState(const char *app_name, WalSndSt
 extern void FTSReplicationStatusMarkDisconnectForReplication(const char *app_name);
 extern pg_time_t FTSGetReplicationDisconnectTime(const char *app_name);
 
-extern void GetMirrorStatus(FtsResponse *response);
+extern WalSnd *FindGpdbWalSnd(void);
+extern void GetMirrorStatus(WalSnd *walsender, FtsResponse *response);
 extern void SetSyncStandbysDefined(void);
 extern void UnsetSyncStandbysDefined(void);
 

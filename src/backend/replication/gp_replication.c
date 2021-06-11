@@ -19,6 +19,7 @@
 #include "replication/walsender.h"
 #include "storage/lwlock.h"
 #include "utils/builtins.h"
+#include "utils/faultinjector.h"
 
 /* Set at database system is ready to accept connections */
 extern pg_time_t PMAcceptingConnectionsStartTime;
@@ -251,8 +252,12 @@ FTSReplicationStatusUpdateForWalState(const char *app_name, WalSndState state)
 	/* replication_status must exist */
 	Assert(replication_status);
 
-	if (state == WALSNDSTATE_CATCHUP || state == WALSNDSTATE_STREAMING)
+	FtsResponse res;
+	GetMirrorStatus(MyWalSnd, &res);
+
+	if (res.IsMirrorUp)
 	{
+		SIMPLE_FAULT_INJECTOR("is_mirror_up");
 		/*
 		 * We can clear the disconnect time once the connection established.
 		 * We only clean the failure count when the wal start streaming, since
@@ -262,7 +267,7 @@ FTSReplicationStatusUpdateForWalState(const char *app_name, WalSndState state)
 		 */
 		FTSReplicationStatusClearDisconnectTime(replication_status);
 		/* If current replication start streaming, clear the failure attempt count */
-		if (state == WALSNDSTATE_STREAMING)
+		if (res.IsInSync)
 			FTSReplicationStatusClearAttempts(replication_status);
 	}
 	else if (FTSReplicationStatusRetrieveDisconnectTime(replication_status) == 0)
@@ -472,13 +477,15 @@ is_mirror_up(WalSnd *walsender)
 	bool walsender_has_pid = walsender->pid != 0;
 
 	/*
-	 * WalSndSetState() resets replica_disconnected_at for
-	 * below states. If modifying below states then be sure
-	 * to update corresponding logic in WalSndSetState() as
-	 * well.
+	 * A mirror is up only if it has received at least one chunk of WAL.  The
+	 * CATCHUP state is entered as soon as a connection request from mirror is
+	 * received.  The connection may fail soon after if the requested
+	 * startpoint is not found in the WAL files available on primary.
 	 */
-	bool is_communicating_with_mirror = walsender->state == WALSNDSTATE_CATCHUP ||
-		walsender->state == WALSNDSTATE_STREAMING;
+	bool is_communicating_with_mirror =
+		(walsender->state == WALSNDSTATE_CATCHUP &&
+		 !XLogRecPtrIsInvalid(walsender->write)) ||
+		 walsender->state == WALSNDSTATE_STREAMING;
 
 	return walsender_has_pid && is_communicating_with_mirror;
 }
@@ -529,43 +536,57 @@ is_probe_retry_needed()
 }
 
 /*
+ * Find the walsender serving Greenplum internal replication connection.
+ */
+WalSnd *
+FindGpdbWalSnd(void)
+{
+	WalSnd *walsender = NULL;
+	bool found = false;
+
+	LWLockAcquire(SyncRepLock, LW_SHARED);
+
+	for (int i = 0; !found && i < max_wal_senders; i++)
+	{
+		walsender = &WalSndCtl->walsnds[i];
+		SpinLockAcquire(&walsender->mutex);
+		found = walsender->is_for_gp_walreceiver;
+		SpinLockRelease(&walsender->mutex);
+	}
+
+	LWLockRelease(SyncRepLock);
+
+	return walsender;
+}
+
+/*
  * Check the WalSndCtl to obtain if mirror is up or down, if the wal sender is
  * in streaming, and if synchronous replication is enabled or not.
  */
 void
-GetMirrorStatus(FtsResponse *response)
+GetMirrorStatus(WalSnd *walsender, FtsResponse *response)
 {
+	bool is_up;
+	bool is_streaming;
+
 	response->IsMirrorUp = false;
 	response->IsInSync = false;
 	response->RequestRetry = false;
 
-	LWLockAcquire(SyncRepLock, LW_SHARED);
-
-	for (int i = 0; i < max_wal_senders; i++)
+	if (walsender)
 	{
-		bool is_up;
-		bool is_streaming;
-		WalSnd *walsender = &WalSndCtl->walsnds[i];
-
 		SpinLockAcquire(&walsender->mutex);
-		if (!walsender->is_for_gp_walreceiver)
-		{
-			SpinLockRelease(&walsender->mutex);
-			continue;
-		}
-
 		is_up = is_mirror_up(walsender);
 		is_streaming = (walsender->state == WALSNDSTATE_STREAMING);
+		SpinLockRelease(&walsender->mutex);
 
 		response->IsMirrorUp = is_up;
 		response->IsInSync = (is_up && is_streaming);
-		SpinLockRelease(&walsender->mutex);
-		break;
+
+		LWLockAcquire(SyncRepLock, LW_SHARED);
+		response->IsSyncRepEnabled = WalSndCtl->sync_standbys_defined;
+		LWLockRelease(SyncRepLock);
 	}
-
-	response->IsSyncRepEnabled = WalSndCtl->sync_standbys_defined;
-
-	LWLockRelease(SyncRepLock);
 
 	if (!response->IsMirrorUp)
 		response->RequestRetry = is_probe_retry_needed();
